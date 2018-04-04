@@ -1,0 +1,120 @@
+#!/usr/bin/env ansible-playbook
+
+- name: CREATE VM PLAYBOOK
+  hosts: localhost
+  connection: local
+  gather_facts: False
+  vars:
+    # Variables 'vnet', 'subnet', 'vmname' and 'resgrp' need to be provided at command line with arg --extra-vars
+#    dnsname: '{{ vmname }}.eastus.cloudapp.azure.com'
+    # The DNS name might not be right depending on your region!!
+#    ip: "{{ lookup ('dig', '{{ dnsname }}') }}"
+   
+  tasks:
+#  - debug: msg="Public DNS name {{ dnsname }} resolved to IP {{ ip }}. "
+# The following check is disabled so that the playbook does not stop upon existence of DNS name. Otherwise
+# it cannot be re-run after VM creation
+#  - name: Check if DNS is taken
+#    fail: msg="That DNS name seems to be already taken"
+#    when: ip != 'NXDOMAIN'
+    - name: Create storage account
+      azure_rm_storageaccount:
+        resource_group: "{{ resgrp }}"
+        name: '{{ vmname }}'
+        account_type: Standard_LRS
+
+    - name: Create virtual network
+      azure_rm_virtualnetwork:
+        resource_group: "{{ resgrp }}"
+        name: "{{ vnet }}"
+        address_prefixes: "10.10.0.0/16"
+    
+    - name: Add subnet
+      azure_rm_subnet:
+        resource_group: "{{ resgrp }}"
+        name: "{{ subnet }}"
+        address_prefix: "10.10.0.0/24"
+        virtual_network: "{{ vnet }}"
+        
+    - name: Create security group that allows SSH and HTTP
+      azure_rm_securitygroup: 
+        resource_group: '{{ resgrp }}'
+        name: "sg_dn{{ vmname }}"
+        purge_rules: yes
+        rules: 
+          - name: sg_ssh
+            protocol: Tcp 
+            destination_port_range: 22  
+            access: Allow  
+            priority: 100
+            direction: Inbound
+          - name: sg_http
+            protocol: Tcp 
+            destination_port_range: 80  
+            access: Allow  
+            priority: 101 
+            direction: Inbound
+
+    - name: Create public IP address
+      azure_rm_publicipaddress: 
+        resource_group: '{{ resgrp }}'
+        allocation_method: Dynamic 
+        name: '{{ vmname }}'
+        domain_name_label: '{{ vmname }}'
+        
+    - name: Create NIC
+      azure_rm_networkinterface:
+        resource_group: '{{ resgrp }}'
+        name: '{{ vmname }}'
+        virtual_network: '{{ vnet }}'
+        subnet_name: '{{ subnet }}'
+        public_ip_name: '{{ vmname }}'
+        security_group: "sg_dn{{ vmname }}"
+    
+    - set_fact: username=centos
+    - name: Create VM
+      azure_rm_virtualmachine:
+        resource_group: '{{ resgrp }}'
+        name: '{{ vmname }}'
+        storage_account: '{{ vmname }}'
+        storage_container: '{{ vmname }}'
+        storage_blob: '{{ vmname }}.vhd'
+        network_interfaces: '{{ vmname }}'
+        vm_size: Standard_A0
+        admin_username: "{{ username }}"
+        ssh_password_enabled: False
+        ssh_public_keys: 
+          - path: "/home/{{ username }}/.ssh/authorized_keys"
+            key_data: 'ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDA1DkeLlqqAZYHKUEZZUDEJJ4uzOyDCs9JvcenQeKyWXEw42espwYcpE7sFFTQQfRzGe/rqPIsMO8ZSfi4Ri1/SdP6GlEH0CAee7Xhg4CtFF+grAxLBtFmoManE60g2NW4HxbBe0oo3krczSIZFVQhX1r4H+Ge3niBMQgyzo1GdJC7gle0PgW6FmHji91OswcxtX3EN4tE8ap7IVo7yy7Jv2jylzeVggXS7Hhegw+CyA6bP3impJbbnTW0oWzALzJXhDFLGU4WCCQwhaVIvJu5vJ9KCEGgqlNOVelLRl41VqdQfsKR7pFU1ldHHGswsaxNr27O9rOSguTK86APfHEl christopher@MacPro.local'
+        image:
+          offer: CentOS
+          publisher: OpenLogic
+          sku: '7.4'
+          version: latest
+        
+
+# The following variables must be specified:
+# - vmname
+# - resgrp
+# - name: Remove Virtual Machine and associated objects
+#   hosts: localhost
+#   connection: local
+#   gather_facts: no
+#   tasks:
+#   - pause:
+#   - name: Remove VM and all resources
+#     azure_rm_virtualmachine:
+#       resource_group: '{{ resgrp }}'
+#       name: '{{ vmname }}'
+#       state: absent
+#       # ignore_errors: yes
+#       remove_on_absent:
+#         - network_interfaces
+#         - virtual_storage
+#         - public_ips
+#   - name: Remove storage account
+#     azure_rm_storageaccount:
+#       resource_group: '{{ resgrp }}'
+#       name:  '{{ vmname }}'
+#       state: absent
+#       # ignore_errors: yes
